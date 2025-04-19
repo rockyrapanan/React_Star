@@ -1,19 +1,102 @@
+// ReactStar - A React Playground with a Custom Language
+// This code is a simple React application that allows users to write and preview React code
+// using a custom language. It includes features like code templates, a custom compiler,
+// and the ability to share code via a URL. The app uses Monaco Editor for code editing
+// and LZString for URL encoding/decoding.
+// Last Updated: 04/10/2025
+//Updated : 04/19/2025
+
 import { Editor } from '@monaco-editor/react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { templates } from './utils/templates';
 import './App.css';
+import LZString from 'lz-string';
 
-type Template = { // templates };
+const compileMyLang = (input: string): string => {
+  return input
+    .replace(/Component (\w+) \{([^}]+)\}/g, (_, comp, body) => {
+      const props = Object.fromEntries(
+        body
+          .trim()
+          .split(/\n|;/)
+          .map((line: string) => line.trim())
+          .filter(Boolean)
+          .map((pair: string) => {
+            const [key, value] = pair.split(':').map((s: string) => s.trim());
+            return [key, value.replace(/^"|"$/g, '')];
+          })
+      );
+
+      const events = Object.entries(props)
+        .filter(([key]) => key.startsWith('on'))
+        .map(([key, val]) => `${key}={() => ${val}}`)
+        .join(' ');
+
+      const otherProps = Object.entries(props)
+        .filter(([key]) => !key.startsWith('on'))
+        .map(([, val]) => `>${val}</${comp}>`);
+
+      return `<${comp} ${events}${otherProps.length ? otherProps[0] : `></${comp}>`}`;
+    })
+    .replace(/print\(([^)]+)\)/g, 'ReactDOM.render($1, document.getElementById("root"))');
+};
+// === END: Custom Language Compiler ===
+
+type Template = {
   [key: string]: {
     name: string;
     code: string;
   };
 };
 
-const typedTemplates = templates as Template; // Type assertion
+const typedTemplates = templates as Template;
+typedTemplates.helloWorld.code = `function App() {
+  return <h1>Hello, World!</h1>;
+}
+
+print(<App />);`;
+
+typedTemplates.button = {
+  name: 'Button with Alert',
+  code: `Component Button {
+  text: "Click me!"
+  onClick: alert("You clicked the button!")
+}`
+};
+
+typedTemplates.list = {
+  name: 'Simple List',
+  code: `function App() {
+  return (
+    <ul>
+      {["Apple", "Banana", "Cherry"].map(fruit => <li>{fruit}</li>)}
+    </ul>
+  );
+}
+
+print(<App />);`
+};
+
+typedTemplates.form = {
+  name: 'Basic Form',
+  code: `function App() {
+  return (
+    <form onSubmit={e => { e.preventDefault(); alert('Submitted!'); }}>
+      <input type="text" placeholder="Your Name" />
+      <button type="submit">Submit</button>
+    </form>
+  );
+}
+
+print(<App />);`
+};
 
 const generateHtml = (code: string) => `
   <html>
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    </head>
     <body>
       <div id="root"></div>
       <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -25,53 +108,77 @@ const generateHtml = (code: string) => `
     </body>
   </html>
 `;
-// This function generates the HTML structure for the iframe, including the React and Babel libraries.
-// It takes the provided code as a string and wraps it in a script tag with type "text/babel".
+
 const downloadCode = (code: string, filename: string) => {
-  const blob = new Blob([code], { type: 'text/plain' }); // Create a new Blob object
-  const a = document.createElement('a'); // Create a new anchor element
+  const blob = new Blob([code], { type: 'text/plain' });
+  const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
 };
- // This function allows users to download the code as a file.
-// It creates a Blob object from the code string and generates a temporary link to download it.
-// The filename is passed as an argument.
-// The function is triggered when the user clicks the "Download" button.
-// The code is passed as a string to the Blob constructor, and the link is clicked programmatically.
-// The link is created using URL.createObjectURL, which generates a URL for the Blob object.
-// The link is then clicked programmatically to trigger the download.
-// The filename is set to the provided filename argument.
+
 const App = () => {
   const [code1, setCode1] = useState(typedTemplates.helloWorld.code);
   const [code2, setCode2] = useState('');
-  const [width1, setWidth1] = useState('1280px');
-  const [width2, setWidth2] = useState('1280px');
+  const [iframeSize, setIframeSize] = useState<'small' | 'medium' | 'large'>('large');
+  const [theme, setTheme] = useState<'vs-dark' | 'light'>('vs-dark');
+  const [mode, setMode] = useState<'tsx' | 'custom'>('tsx');
+
+  useEffect(() => {
+    const saved = localStorage.getItem('customCode');
+    if (saved) setCode2(saved);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('customCode', code2);
+  }, [code2]);
+
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (hash) {
+      const decompressedCode = LZString.decompressFromEncodedURIComponent(hash);
+      if (decompressedCode) {
+        setCode2(decompressedCode);
+      }
+    }
+  }, []);
+
+  const compiledCode = mode === 'custom' ? compileMyLang(code2) : code2;
 
   return (
     <div className="app-container">
-      <h1>ReactBox Dual Preview</h1>
+      <h1>ReactStar</h1>
+      <p>Write and preview React code with a custom language!</p>
+      <div className="toolbar">
+        <select
+          title="Select Template"
+          onChange={(e) => setCode1(typedTemplates[e.target.value].code)}
+        >
+          <option disabled selected>
+            -- Select Template --
+          </option>
+          {Object.entries(typedTemplates).map(([key, { name }]) => (
+            <option key={key} value={key}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select title="Select Mode" onChange={(e) => setMode(e.target.value as 'tsx' | 'custom')}>
+          <option value="tsx">React/TSX</option>
+          <option value="custom">MyLang</option>
+        </select>
+        <button onClick={() => setTheme((prev) => (prev === 'light' ? 'vs-dark' : 'light'))}>
+          Toggle Theme
+        </button>
+        <button onClick={() => setCode2('')}>🧼 Clear</button>
+      </div>
 
       <div className="editor-preview-wrapper">
-        {/* === Left Panel (Templates) === */}
         <div className="preview-wrapper">
-          <select
-            title="Select Template 1"
-            onChange={(e) =>
-              setCode1(typedTemplates[e.target.value].code)
-            }
-          >
-            <option disabled selected>-- Select Template --</option>
-            {Object.entries(typedTemplates).map(([key, { name }]) => (
-              <option key={key} value={key}>
-                {name}
-              </option>
-            ))}
-          </select>
           <Editor
             height="300px"
-            defaultLanguage="javascript"
-            theme="vs-dark"
+            defaultLanguage="typescript"
+            theme={theme}
             value={code1}
             onChange={(val) => setCode1(val || '')}
           />
@@ -79,51 +186,55 @@ const App = () => {
             srcDoc={generateHtml(code1)}
             sandbox="allow-scripts"
             title="Preview 1"
-            className="custom-preview"
-            data-width={width1}
+            className={`responsive-iframe ${iframeSize}`}
+            
           />
-          {/* This iframe displays the generated HTML content based on the provided code. */}
-          {/* The sandbox attribute allows scripts to run in a secure environment. */}
-          {/* The title attribute provides an accessible name for the iframe. */}
           <div className="device-buttons">
-            <button onClick={() => setWidth1('375px')}>📱</button>
-            <button onClick={() => setWidth1('768px')}>📲</button>
-            <button onClick={() => setWidth1('1280px')}>💻</button>
-            <button onClick={() => downloadCode(code1, 'template1.js')}>💾 Download</button>
+            <button onClick={() => setIframeSize('small')}>📱</button>
+            <button onClick={() => setIframeSize('medium')}>📲</button>
+            <button onClick={() => setIframeSize('large')}>💻</button>
+            <button onClick={() => downloadCode(code1, 'template1.tsx')}>💾 Download</button>
           </div>
         </div>
 
-        {/* === Right Panel (Blank Editor) === */}
         <div className="preview-wrapper">
-          <p className="blank-editor-title">Blank Editor</p>
           <Editor
             height="300px"
-            defaultLanguage="javascript"
-            theme="vs-dark"
+            defaultLanguage="typescript"
+            theme={theme}
             value={code2}
             onChange={(val) => setCode2(val || '')}
           />
           <iframe
-            srcDoc={generateHtml(code2)}
+            srcDoc={generateHtml(compiledCode)}
             sandbox="allow-scripts"
             title="Preview 2"
-            className="custom-preview"
-            data-width={width2}
+            className={`responsive-iframe ${iframeSize}`}
+            
           />
           <div className="device-buttons">
-            <button onClick={() => setWidth2('375px')}>📱</button>
-            <button onClick={() => setWidth2('768px')}>📲</button>
-            <button onClick={() => setWidth2('1280px')}>💻</button>
-            <button onClick={() => setCode2('')}>🧼 Clear</button>
-            <button onClick={() => downloadCode(code2, 'customCode.js')}>💾 Download</button>
+            <button onClick={() => setIframeSize('small')}>📱</button>
+            <button onClick={() => setIframeSize('medium')}>📲</button>
+            <button onClick={() => setIframeSize('large')}>💻</button>
+            <button onClick={() => downloadCode(code2, 'customCode.txt')}>💾 Download</button>
           </div>
         </div>
+      </div>
+
+      <div className="share-url">
+        <button
+          onClick={() => {
+            const encoded = LZString.compressToEncodedURIComponent(code2);
+            const shareLink = `${window.location.origin}/#${encoded}`;
+            navigator.clipboard.writeText(shareLink);
+            alert('Shareable link copied to clipboard!');
+          }}
+        >
+          🔗 Share Code
+        </button>
       </div>
     </div>
   );
 };
-// This component renders the main application interface.
-// It includes a title, two panels for templates and a blank editor, and buttons for device previews and downloads.
-// The left panel allows users to select a template from a dropdown menu.
-// The right panel is a blank editor where users can write their own code.
+
 export default App;
